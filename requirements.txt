@@ -1,2 +1,2 @@
-djitellopy
-pygame
+djitellopy==2.4.0
+pygame==2.1.2
