@@ -5,8 +5,9 @@ import time
 from djitellopy import Tello
 import pygame
 import threading
+import os
 
-logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
+logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.WARNING)
 
 
 DRONE_SPEED = 20
@@ -39,13 +40,19 @@ class DroneActionThread(threading.Thread):
         logging.info("Connecting the drone...")
         self.t = Tello()
         try:
+            os.system(
+                "nmcli d wifi connect {} password {} ifname {}"
+                .format("TELLO-CFB4A2", "''", "wlp0s20f3")
+            )
+
+
             self.t.connect()
             logging.info("Drone connected")
             logging.info(f"Battery remaining: {self.t.get_battery()}%")
             logging.info(f"Average temperature: {self.t.get_temperature()} Celcius")
 
-            self.t.streamoff()
-            self.t.streamon()
+            #self.t.streamoff()
+            #self.t.streamon()
         except Exception as err:
             logging.error(f"Drone detection error: {err}")
             self.t = None
