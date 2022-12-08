@@ -6,9 +6,10 @@ from djitellopy import Tello
 import pygame
 import threading
 import os
+import subprocess
 
-logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.WARNING)
-
+logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
+Tello.LOGGER.setLevel(logging.WARNING)
 
 DRONE_SPEED = 20
 BTN_TRIANGLE_INDEX = 2
@@ -25,26 +26,36 @@ JOYHAT_AXIS_TO_INDEX = {
 
 AIRBORNE_STATE = False
 
-MOVE_ACTIONS = {"x": 0, "y": 0, "z": 0, "w": 0}
-AIRBORNE_ACTIONS = {"land": False, "takeoff": False}
+MOVE_STATES = {"x": 0, "y": 0, "z": 0, "w": 0}
+AIRBORNE_ACTIONS = {"land": False, "takeoff": False, "return": False}
 FLIP_ACTIONS = {"x": 0, "y": 0}
+
 
 class DroneActionThread(threading.Thread):
     
     def __init__(self, threadID, name, counter):
+        global MOVE_STATES
         threading.Thread.__init__(self)
         self.threadID = threadID
         self.name = name
         self.counter = counter
+        self.move_states = MOVE_STATES.copy()
 
         logging.info("Connecting the drone...")
         self.t = Tello()
         try:
-            os.system(
-                "nmcli d wifi connect {} password {} ifname {}"
-                .format("TELLO-CFB4A2", "''", "wlp0s20f3")
-            )
-
+            retry_cnt = 5
+            while retry_cnt > 0:
+                try:
+                    subprocess.run(
+                        ["nmcli", "d", "wifi", "connect", "TELLO-CFB4A2", "password", "''", "ifname", "wlp0s20f3"],
+                        check = True
+                    )
+                    break
+                except subprocess.CalledProcessError as err:
+                    logging.warning(f"Error trying to connect to network: {err}")
+                    time.sleep(5)
+                    retry_cnt -= 1
 
             self.t.connect()
             logging.info("Drone connected")
@@ -58,21 +69,26 @@ class DroneActionThread(threading.Thread):
             self.t = None
 
     def run(self):
-        global MOVE_ACTIONS, AIRBORNE_ACTIONS, AIRBORNE_STATE, FLIP_ACTIONS
+        global MOVE_STATES, AIRBORNE_ACTIONS, AIRBORNE_STATE, FLIP_ACTIONS
         
-        logging.debug(f"Running thread {any(MOVE_ACTIONS.values())}...")
+        logging.debug(f"Running thread {any(MOVE_STATES.values())}...")
         while True:
-            
             if self.t:
-                try:
-                    self.t.send_rc_control(
-                        MOVE_ACTIONS["x"],
-                        MOVE_ACTIONS["y"] * (-1),
-                        MOVE_ACTIONS["z"],
-                        MOVE_ACTIONS["w"]
-                    )
-                except Exception as err:
-                    logging.error(f"Move action failed: {err}")
+                logging.debug(self.t.get_distance_tof()) 
+            if self.t:
+                if self.move_states != MOVE_STATES:
+                    self.move_states = MOVE_STATES.copy()
+                    logging.debug(f"New move states: {self.move_states}")
+                    try:
+                        self.t.send_rc_control(
+                            MOVE_STATES["x"],
+                            MOVE_STATES["y"] * (-1),
+                            MOVE_STATES["z"],
+                            MOVE_STATES["w"]
+                        )
+
+                    except Exception as err:
+                        logging.error(f"Move state update failed: {err}")
 
             if any(FLIP_ACTIONS.values()):
                 logging.debug(f"Flip actions detected: {FLIP_ACTIONS}")
@@ -119,14 +135,26 @@ if __name__ == '__main__':
     pygame.time.set_timer(pygame.USEREVENT + 1, 1000 // FPS)
 
     c = None
-    logging.info("Connecting the controller...")
-    try:
-        c = pygame.joystick.Joystick(0)
-        c.init()
-    except pygame.error as err:
-        logging.error(f"Controller detection error: {err}")
+    retry_cnt = 5
+    while retry_cnt > 0:
+        if pygame.joystick.get_count() == 0:
+            logging.warning(f"No controllers detected. Retrying in 5 seconds {retry_cnt} more time(s)...")
+            time.sleep(5)
+            retry_cnt -= 1
+            continue
+        else:
+            logging.info(f"Controller(s) detected. Connecting the first found...")
+            try:
+                c = pygame.joystick.Joystick(0)
+                c.init()
+                logging.info("Controller connected")
+                break
+            except pygame.error as err:
+                logging.error(f"Controller detection error: {err}")
+                exit()
+    if c is None:
+        logging.error(f"No controller found. Exiting...")
         exit()
-    logging.info("Controller connected")
 
     is_drone_flying = False
     droneActionThread = None
@@ -150,7 +178,7 @@ if __name__ == '__main__':
                 # Calculate direction and volume from event.axis and event.value
                 if event.axis in JOYSTICK_INDEX_TO_AXIS:
                     #logging.debug(f"Move intent detected: {event}")
-                    MOVE_ACTIONS[JOYSTICK_INDEX_TO_AXIS[event.axis]] = event.value * 10
+                    MOVE_STATES[JOYSTICK_INDEX_TO_AXIS[event.axis]] = event.value * 10
 
             if event.type == pygame.JOYHATMOTION:
                 logging.info(f"Flip intent detected: {event}")
