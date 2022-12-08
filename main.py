@@ -12,6 +12,7 @@ logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
 Tello.LOGGER.setLevel(logging.WARNING)
 
 DRONE_SPEED = 20
+BTN_CIRCLE_INDEX = 1
 BTN_TRIANGLE_INDEX = 2
 JOYSTICK_INDEX_TO_AXIS = {
     4: "y",     # forward / backward
@@ -105,20 +106,65 @@ class DroneActionThread(threading.Thread):
             if any(AIRBORNE_ACTIONS.values()):
                 logging.debug(f"Airborne actions detected: {AIRBORNE_ACTIONS}")
                 if self.t:
-                    if AIRBORNE_ACTIONS["land"]:
-                        try:
+                    try:
+                        if AIRBORNE_ACTIONS["land"]:
                             self.t.land()
-                            logging.info("Drone has landed")
                             AIRBORNE_STATE = False
-                        except Exception as err:
-                            logging.error(f"Landing failed: {err}")
-                    elif AIRBORNE_ACTIONS["takeoff"]:
-                        try:
+                            logging.info("Drone has landed")
+                        elif AIRBORNE_ACTIONS["takeoff"]:
                             self.t.takeoff()
-                            logging.info("Drone has taken off")
                             AIRBORNE_STATE = True
-                        except Exception as err:
-                            logging.error(f"Takeoff failed: {err}")
+                            logging.info("Drone has taken off")
+                        elif AIRBORNE_ACTIONS["return"]:
+                            logging.info("Drone is returning")
+                            acc = 30
+                            closer_distance = 90
+                            distance_diff_thres = 5
+                            count_time = 2
+
+                            # try the x-axis
+                            last_measured_distance = self.t.get_distance_tof()
+                            self.t.send_rc_control(acc, 0, 0, 0)
+                            # change direction if moving away
+                            time.sleep(count_time)
+                            while self.t.get_distance_tof() > last_measured_distance:
+                                acc = acc * (-1)
+                                self.t.send_rc_control(acc, 0, 0, 0)
+                                time.sleep(count_time)
+                                last_measured_distance = self.t.get_distance_tof()
+                            logging.info("x-axis direction established.")
+                            time.sleep(count_time)
+                            # minimize distance while there's a significant change
+                            distance_diff = abs(self.t.get_distance_tof() - last_measured_distance)
+                            while self.t.get_distance_tof() > closer_distance and distance_diff > distance_diff_thres:                                    
+                                time.sleep(count_time)
+                                distance_diff = abs(self.t.get_distance_tof() - last_measured_distance)
+                                last_measured_distance = self.t.get_distance_tof()
+                            self.t.send_rc_control(0, 0, 0, 0)
+                            logging.info("Drone got as close as it could on the x-axis.")
+
+                            # try the y-axis
+                            last_measured_distance = self.t.get_distance_tof()
+                            self.t.send_rc_control(0, acc, 0, 0)
+                            # change direction if moving away
+                            while self.t.get_distance_tof() > last_measured_distance:
+                                acc = acc * (-1)
+                                self.t.send_rc_control(0, acc, 0, 0)
+                                time.sleep(count_time)
+                                last_measured_distance = self.t.get_distance_tof()
+                            logging.info("y-axis direction established.")
+                            # minimize distance while there's a significant change
+                            distance_diff = abs(self.t.get_distance_tof() - last_measured_distance)
+                            while self.t.get_distance_tof() > closer_distance and distance_diff > distance_diff_thres:                                    
+                                time.sleep(count_time)
+                                distance_diff = abs(self.t.get_distance_tof() - last_measured_distance)
+                                last_measured_distance = self.t.get_distance_tof()
+                            self.t.send_rc_control(0, 0, 0, 0)
+                            logging.info("Drone got as close as it could on the y-axis. Rest is manual :)")
+
+
+                    except Exception as err:
+                        logging.error(f"Airborne state change failed: {err}")
                 AIRBORNE_ACTIONS = dict.fromkeys(AIRBORNE_ACTIONS, False)
 
             time.sleep(0.1)
@@ -189,7 +235,9 @@ if __name__ == '__main__':
 
             if event.type == pygame.JOYBUTTONUP:
                 logging.info(f"Key pressed: {event}")
-                if event.button == BTN_TRIANGLE_INDEX:
+                if event.button == BTN_CIRCLE_INDEX:
+                    AIRBORNE_ACTIONS["return"] = True
+                elif event.button == BTN_TRIANGLE_INDEX:
                     if not AIRBORNE_STATE:
                         logging.info("Trying liftoff...")
                         AIRBORNE_ACTIONS["takeoff"] = True
