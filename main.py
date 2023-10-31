@@ -32,9 +32,26 @@ AIRBORNE_ACTIONS = {"land": False, "takeoff": False, "return": False}
 FLIP_ACTIONS = {"x": 0, "y": 0}
 
 
+class DroneStateThread(threading.Thread):
+
+    def __init__(self, threadID, name, counter, tello):
+        threading.Thread.__init__(self)
+        self.threadID = threadID
+        self.name = name
+        self.counter = counter
+        self.t = tello
+
+    def run(self):
+        while True:
+            time.sleep(3)
+            if self.t:
+                logging.info(f"{self.t.get_current_state()}")
+
+
+
 class DroneActionThread(threading.Thread):
     
-    def __init__(self, threadID, name, counter):
+    def __init__(self, threadID, name, counter, tello):
         global MOVE_STATES
         threading.Thread.__init__(self)
         self.threadID = threadID
@@ -42,8 +59,7 @@ class DroneActionThread(threading.Thread):
         self.counter = counter
         self.move_states = MOVE_STATES.copy()
 
-        logging.info("Connecting the drone...")
-        self.t = Tello()
+        self.t = tello
         try:
             retry_cnt = 5
             while retry_cnt > 0:
@@ -54,15 +70,11 @@ class DroneActionThread(threading.Thread):
                     )
                     break
                 except subprocess.CalledProcessError as err:
-                    logging.warning(f"Error trying to connect to network: {err}")
+                    logging.warning(f"Error trying to connect to network: {err}. Trying {retry_cnt} more time(s)")
                     time.sleep(5)
                     retry_cnt -= 1
 
             self.t.connect()
-            logging.info("Drone connected")
-            logging.info(f"Battery remaining: {self.t.get_battery()}%")
-            logging.info(f"Average temperature: {self.t.get_temperature()} Celcius")
-
             #self.t.streamoff()
             #self.t.streamon()
         except Exception as err:
@@ -72,14 +84,12 @@ class DroneActionThread(threading.Thread):
     def run(self):
         global MOVE_STATES, AIRBORNE_ACTIONS, AIRBORNE_STATE, FLIP_ACTIONS
         
-        logging.debug(f"Running thread {any(MOVE_STATES.values())}...")
         while True:
-            if self.t:
-                logging.debug(self.t.get_distance_tof()) 
+            time.sleep(0.1)
             if self.t:
                 if self.move_states != MOVE_STATES:
                     self.move_states = MOVE_STATES.copy()
-                    logging.debug(f"New move states: {self.move_states}")
+                    #logging.debug(f"New move states: {self.move_states}")
                     try:
                         self.t.send_rc_control(
                             MOVE_STATES["x"],
@@ -90,6 +100,8 @@ class DroneActionThread(threading.Thread):
 
                     except Exception as err:
                         logging.error(f"Move state update failed: {err}")
+                    logging.info(f"{self.t.get_current_state()}")
+
 
             if any(FLIP_ACTIONS.values()):
                 logging.debug(f"Flip actions detected: {FLIP_ACTIONS}")
@@ -167,7 +179,6 @@ class DroneActionThread(threading.Thread):
                         logging.error(f"Airborne state change failed: {err}")
                 AIRBORNE_ACTIONS = dict.fromkeys(AIRBORNE_ACTIONS, False)
 
-            time.sleep(0.1)
 
 if __name__ == '__main__':
 
@@ -189,7 +200,7 @@ if __name__ == '__main__':
             retry_cnt -= 1
             continue
         else:
-            logging.info(f"Controller(s) detected. Connecting the first found...")
+            logging.info(f"{pygame.joystick.get_count()} controller(s) detected. Connecting the first...")
             try:
                 c = pygame.joystick.Joystick(0)
                 c.init()
@@ -202,11 +213,14 @@ if __name__ == '__main__':
         logging.error(f"No controller found. Exiting...")
         exit()
 
+    t = Tello()
     is_drone_flying = False
-    droneActionThread = None
-    logging.info("Connecting the drone...")
-    droneActionThread = DroneActionThread(1, "DroneActionThread", 1)
-    droneActionThread.start()
+    if t:
+        logging.info("Connecting the drone...")
+        droneActionThread = DroneActionThread(1, "DroneActionThread", 1, t)
+        droneActionThread.start()
+        #droneStateThread = DroneStateThread(2, "DroneStateThread", 2, t)
+        #droneStateThread.start()
 
     logging.info("Listening for controller events...")
     done = False
